@@ -4,6 +4,7 @@ Package server is the place we integrate the Livepeer node with the LPMS media s
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ericxtang/m3u8"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/common"
@@ -48,7 +50,8 @@ const EthMinedTxTimeout = 60 * time.Second
 var HLSWaitTime = time.Second * 45
 var BroadcastPrice = big.NewInt(1)
 var BroadcastJobVideoProfiles = []ffmpeg.VideoProfile{ffmpeg.P240p30fps4x3, ffmpeg.P360p30fps16x9}
-var MinDepositSegmentCount = int64(75) //5 mins assuming 4s segments
+var MinDepositSegmentCount = int64(75)     //5 mins assuming 4s segments
+var MinJobBlocksRemaining = big.NewInt(40) // 10 mins assuming 15s blocks
 var LastHLSStreamID core.StreamID
 var LastManifestID core.ManifestID
 
@@ -297,8 +300,33 @@ func gotRTMPStreamHandler(s *LivepeerServer) func(url *url.URL, rtmpStrm stream.
 		s.broadcastRtmpToManifestMap[rtmpStrm.GetStreamID()] = string(mid)
 
 		if s.LivepeerNode.Eth != nil {
-			//Create Transcode Job Onchain
-			go s.LivepeerNode.CreateTranscodeJob(hlsStrmID, BroadcastJobVideoProfiles, BroadcastPrice)
+			blknum, err := s.LivepeerNode.Eth.LatestBlockNum()
+			if err != nil {
+				glog.Error("Unable to fetch latest block number ", err)
+				return err
+			}
+			until := big.NewInt(0).Add(blknum, MinJobBlocksRemaining)
+			bcasts, err := s.LivepeerNode.Database.ActiveBroadcasts(until)
+			if err != nil {
+				glog.Error("Unable to find active broadcasts ", err)
+				return err
+			}
+			tca := ethcommon.Address{}
+			bcast := &common.DBJob{}
+			for _, b := range bcasts {
+				// check if assigned transcoder is still valid.
+				if _, err := s.LivepeerNode.Eth.GetTranscoder(b.Transcoder); err == nil {
+					tca = b.Transcoder
+					bcast = b
+					break
+				}
+			}
+			if bytes.Equal(tca.Bytes(), ethcommon.Address{}.Bytes()) {
+				go s.LivepeerNode.CreateTranscodeJob(hlsStrmID, BroadcastJobVideoProfiles, BroadcastPrice)
+				return nil
+			}
+
+			glog.Infof("Resuming job %v with transcoder %v", bcast.ID, tca)
 		}
 		return nil
 	}

@@ -103,6 +103,8 @@ type LivepeerEthClient interface {
 	VerificationCodeHash() (string, error)
 	Paused() (bool, error)
 
+	WatchForJob(chan *contracts.JobsManagerNewJob) error
+
 	// Helpers
 	ContractAddresses() map[string]ethcommon.Address
 	CheckTx(*types.Transaction) error
@@ -785,6 +787,11 @@ func (c *client) CheckTx(tx *types.Transaction) error {
 
 func (c *client) Sign(msg []byte) ([]byte, error) {
 	return c.accountManager.Sign(msg)
+}
+
+func (c *client) WatchForJob(sink chan *contracts.JobsManagerNewJob) error {
+	_, err := c.JobsManagerSession.Contract.JobsManagerFilterer.WatchNewJob(nil, sink, []ethcommon.Address{c.Account().Address})
+	return err
 }
 
 func (c *client) getNonce() (uint64, error) {
