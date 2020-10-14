@@ -13,20 +13,22 @@ import (
 var (
 	ErrRewardServiceStarted = fmt.Errorf("reward service already started")
 	ErrRewardServiceStopped = fmt.Errorf("reward service already stopped")
-
-	TryRewardPollingInterval = time.Minute * 30 // Poll to try to call reward once 30 minutes
 )
 
+const blockTime = 15 * time.Second
+
 type RewardService struct {
-	client       eth.LivepeerEthClient
-	pendingTx    *types.Transaction
-	working      bool
-	cancelWorker context.CancelFunc
+	client          eth.LivepeerEthClient
+	pendingTx       *types.Transaction
+	working         bool
+	cancelWorker    context.CancelFunc
+	pollingInterval time.Duration
 }
 
-func NewRewardService(client eth.LivepeerEthClient) *RewardService {
+func NewRewardService(client eth.LivepeerEthClient, pollingInterval time.Duration) *RewardService {
 	return &RewardService{
-		client: client,
+		client:          client,
+		pollingInterval: pollingInterval,
 	}
 }
 
@@ -35,10 +37,10 @@ func (s *RewardService) Start(ctx context.Context) error {
 		return ErrRewardServiceStarted
 	}
 
-	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancelCtx, cancel := context.WithCancel(ctx)
 	s.cancelWorker = cancel
 
-	tickCh := time.NewTicker(TryRewardPollingInterval).C
+	tickCh := time.NewTicker(s.pollingInterval).C
 
 	go func(ctx context.Context) {
 		for {
@@ -122,20 +124,17 @@ func (s *RewardService) tryReward() error {
 			}
 		}
 
+		s.pendingTx = tx
+
 		err = s.client.CheckTx(tx)
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				glog.Infof("Reward tx did not confirm within defined time window - will try to replace pending tx next time")
-
-				// Tx did not confirm within defined time window
-				// Store pending tx
-				s.pendingTx = tx
 			}
 
 			return err
 		}
 
-		// Transaction confirmed so there is no pending call for reward()
 		s.pendingTx = nil
 
 		tp, err := s.client.GetTranscoderEarningsPoolForRound(s.client.Account().Address, currentRound)

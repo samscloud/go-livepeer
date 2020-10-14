@@ -15,8 +15,20 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 )
 
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.NotFound
+	_ = abi.U256
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+)
+
 // RoundsManagerABI is the input ABI used to generate the binding from.
-const RoundsManagerABI = "[{\"constant\":true,\"inputs\":[],\"name\":\"lastRoundLengthUpdateRound\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"targetContractId\",\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"lastRoundLengthUpdateStartBlock\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"lastInitializedRound\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"roundLength\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"name\":\"_controller\",\"type\":\"address\"}],\"name\":\"setController\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"roundLockAmount\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"controller\",\"outputs\":[{\"name\":\"\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"name\":\"_controller\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"name\":\"round\",\"type\":\"uint256\"}],\"name\":\"NewRound\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"name\":\"controller\",\"type\":\"address\"}],\"name\":\"SetController\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"name\":\"param\",\"type\":\"string\"}],\"name\":\"ParameterUpdate\",\"type\":\"event\"},{\"constant\":false,\"inputs\":[{\"name\":\"_roundLength\",\"type\":\"uint256\"}],\"name\":\"setRoundLength\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"name\":\"_roundLockAmount\",\"type\":\"uint256\"}],\"name\":\"setRoundLockAmount\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[],\"name\":\"initializeRound\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"blockNum\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"_block\",\"type\":\"uint256\"}],\"name\":\"blockHash\",\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRound\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRoundStartBlock\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRoundInitialized\",\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRoundLocked\",\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"}]"
+const RoundsManagerABI = "[{\"constant\":true,\"inputs\":[],\"name\":\"lastRoundLengthUpdateRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"targetContractId\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"lastRoundLengthUpdateStartBlock\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"lastInitializedRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"roundLength\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"address\",\"name\":\"_controller\",\"type\":\"address\"}],\"name\":\"setController\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"roundLockAmount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"controller\",\"outputs\":[{\"internalType\":\"contractIController\",\"name\":\"\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_controller\",\"type\":\"address\"}],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"round\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"bytes32\",\"name\":\"blockHash\",\"type\":\"bytes32\"}],\"name\":\"NewRound\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"controller\",\"type\":\"address\"}],\"name\":\"SetController\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"string\",\"name\":\"param\",\"type\":\"string\"}],\"name\":\"ParameterUpdate\",\"type\":\"event\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_roundLength\",\"type\":\"uint256\"}],\"name\":\"setRoundLength\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_roundLockAmount\",\"type\":\"uint256\"}],\"name\":\"setRoundLockAmount\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[],\"name\":\"initializeRound\",\"outputs\":[],\"payable\":false,\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"blockNum\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_block\",\"type\":\"uint256\"}],\"name\":\"blockHash\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_round\",\"type\":\"uint256\"}],\"name\":\"blockHashForRound\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRoundStartBlock\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRoundInitialized\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"currentRoundLocked\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"}]"
 
 // RoundsManager is an auto generated Go binding around an Ethereum contract.
 type RoundsManager struct {
@@ -162,7 +174,7 @@ func (_RoundsManager *RoundsManagerTransactorRaw) Transact(opts *bind.TransactOp
 
 // BlockHash is a free data retrieval call binding the contract method 0x85df51fd.
 //
-// Solidity: function blockHash(_block uint256) constant returns(bytes32)
+// Solidity: function blockHash(uint256 _block) constant returns(bytes32)
 func (_RoundsManager *RoundsManagerCaller) BlockHash(opts *bind.CallOpts, _block *big.Int) ([32]byte, error) {
 	var (
 		ret0 = new([32]byte)
@@ -174,16 +186,42 @@ func (_RoundsManager *RoundsManagerCaller) BlockHash(opts *bind.CallOpts, _block
 
 // BlockHash is a free data retrieval call binding the contract method 0x85df51fd.
 //
-// Solidity: function blockHash(_block uint256) constant returns(bytes32)
+// Solidity: function blockHash(uint256 _block) constant returns(bytes32)
 func (_RoundsManager *RoundsManagerSession) BlockHash(_block *big.Int) ([32]byte, error) {
 	return _RoundsManager.Contract.BlockHash(&_RoundsManager.CallOpts, _block)
 }
 
 // BlockHash is a free data retrieval call binding the contract method 0x85df51fd.
 //
-// Solidity: function blockHash(_block uint256) constant returns(bytes32)
+// Solidity: function blockHash(uint256 _block) constant returns(bytes32)
 func (_RoundsManager *RoundsManagerCallerSession) BlockHash(_block *big.Int) ([32]byte, error) {
 	return _RoundsManager.Contract.BlockHash(&_RoundsManager.CallOpts, _block)
+}
+
+// BlockHashForRound is a free data retrieval call binding the contract method 0x3aa4add4.
+//
+// Solidity: function blockHashForRound(uint256 _round) constant returns(bytes32)
+func (_RoundsManager *RoundsManagerCaller) BlockHashForRound(opts *bind.CallOpts, _round *big.Int) ([32]byte, error) {
+	var (
+		ret0 = new([32]byte)
+	)
+	out := ret0
+	err := _RoundsManager.contract.Call(opts, out, "blockHashForRound", _round)
+	return *ret0, err
+}
+
+// BlockHashForRound is a free data retrieval call binding the contract method 0x3aa4add4.
+//
+// Solidity: function blockHashForRound(uint256 _round) constant returns(bytes32)
+func (_RoundsManager *RoundsManagerSession) BlockHashForRound(_round *big.Int) ([32]byte, error) {
+	return _RoundsManager.Contract.BlockHashForRound(&_RoundsManager.CallOpts, _round)
+}
+
+// BlockHashForRound is a free data retrieval call binding the contract method 0x3aa4add4.
+//
+// Solidity: function blockHashForRound(uint256 _round) constant returns(bytes32)
+func (_RoundsManager *RoundsManagerCallerSession) BlockHashForRound(_round *big.Int) ([32]byte, error) {
+	return _RoundsManager.Contract.BlockHashForRound(&_RoundsManager.CallOpts, _round)
 }
 
 // BlockNum is a free data retrieval call binding the contract method 0x8ae63d6d.
@@ -521,63 +559,63 @@ func (_RoundsManager *RoundsManagerTransactorSession) InitializeRound() (*types.
 
 // SetController is a paid mutator transaction binding the contract method 0x92eefe9b.
 //
-// Solidity: function setController(_controller address) returns()
+// Solidity: function setController(address _controller) returns()
 func (_RoundsManager *RoundsManagerTransactor) SetController(opts *bind.TransactOpts, _controller common.Address) (*types.Transaction, error) {
 	return _RoundsManager.contract.Transact(opts, "setController", _controller)
 }
 
 // SetController is a paid mutator transaction binding the contract method 0x92eefe9b.
 //
-// Solidity: function setController(_controller address) returns()
+// Solidity: function setController(address _controller) returns()
 func (_RoundsManager *RoundsManagerSession) SetController(_controller common.Address) (*types.Transaction, error) {
 	return _RoundsManager.Contract.SetController(&_RoundsManager.TransactOpts, _controller)
 }
 
 // SetController is a paid mutator transaction binding the contract method 0x92eefe9b.
 //
-// Solidity: function setController(_controller address) returns()
+// Solidity: function setController(address _controller) returns()
 func (_RoundsManager *RoundsManagerTransactorSession) SetController(_controller common.Address) (*types.Transaction, error) {
 	return _RoundsManager.Contract.SetController(&_RoundsManager.TransactOpts, _controller)
 }
 
 // SetRoundLength is a paid mutator transaction binding the contract method 0x681312f5.
 //
-// Solidity: function setRoundLength(_roundLength uint256) returns()
+// Solidity: function setRoundLength(uint256 _roundLength) returns()
 func (_RoundsManager *RoundsManagerTransactor) SetRoundLength(opts *bind.TransactOpts, _roundLength *big.Int) (*types.Transaction, error) {
 	return _RoundsManager.contract.Transact(opts, "setRoundLength", _roundLength)
 }
 
 // SetRoundLength is a paid mutator transaction binding the contract method 0x681312f5.
 //
-// Solidity: function setRoundLength(_roundLength uint256) returns()
+// Solidity: function setRoundLength(uint256 _roundLength) returns()
 func (_RoundsManager *RoundsManagerSession) SetRoundLength(_roundLength *big.Int) (*types.Transaction, error) {
 	return _RoundsManager.Contract.SetRoundLength(&_RoundsManager.TransactOpts, _roundLength)
 }
 
 // SetRoundLength is a paid mutator transaction binding the contract method 0x681312f5.
 //
-// Solidity: function setRoundLength(_roundLength uint256) returns()
+// Solidity: function setRoundLength(uint256 _roundLength) returns()
 func (_RoundsManager *RoundsManagerTransactorSession) SetRoundLength(_roundLength *big.Int) (*types.Transaction, error) {
 	return _RoundsManager.Contract.SetRoundLength(&_RoundsManager.TransactOpts, _roundLength)
 }
 
 // SetRoundLockAmount is a paid mutator transaction binding the contract method 0x0b1573b8.
 //
-// Solidity: function setRoundLockAmount(_roundLockAmount uint256) returns()
+// Solidity: function setRoundLockAmount(uint256 _roundLockAmount) returns()
 func (_RoundsManager *RoundsManagerTransactor) SetRoundLockAmount(opts *bind.TransactOpts, _roundLockAmount *big.Int) (*types.Transaction, error) {
 	return _RoundsManager.contract.Transact(opts, "setRoundLockAmount", _roundLockAmount)
 }
 
 // SetRoundLockAmount is a paid mutator transaction binding the contract method 0x0b1573b8.
 //
-// Solidity: function setRoundLockAmount(_roundLockAmount uint256) returns()
+// Solidity: function setRoundLockAmount(uint256 _roundLockAmount) returns()
 func (_RoundsManager *RoundsManagerSession) SetRoundLockAmount(_roundLockAmount *big.Int) (*types.Transaction, error) {
 	return _RoundsManager.Contract.SetRoundLockAmount(&_RoundsManager.TransactOpts, _roundLockAmount)
 }
 
 // SetRoundLockAmount is a paid mutator transaction binding the contract method 0x0b1573b8.
 //
-// Solidity: function setRoundLockAmount(_roundLockAmount uint256) returns()
+// Solidity: function setRoundLockAmount(uint256 _roundLockAmount) returns()
 func (_RoundsManager *RoundsManagerTransactorSession) SetRoundLockAmount(_roundLockAmount *big.Int) (*types.Transaction, error) {
 	return _RoundsManager.Contract.SetRoundLockAmount(&_RoundsManager.TransactOpts, _roundLockAmount)
 }
@@ -651,28 +689,39 @@ func (it *RoundsManagerNewRoundIterator) Close() error {
 
 // RoundsManagerNewRound represents a NewRound event raised by the RoundsManager contract.
 type RoundsManagerNewRound struct {
-	Round *big.Int
-	Raw   types.Log // Blockchain specific contextual infos
+	Round     *big.Int
+	BlockHash [32]byte
+	Raw       types.Log // Blockchain specific contextual infos
 }
 
-// FilterNewRound is a free log retrieval operation binding the contract event 0xa2b5357eea32aeb35142ba36b087f9fe674f34f8b57ce94d30e9f4f572195bcf.
+// FilterNewRound is a free log retrieval operation binding the contract event 0x22f2fc17c5daf07db2379b3a03a8ef20a183f761097a58fce219c8a14619e786.
 //
-// Solidity: event NewRound(round uint256)
-func (_RoundsManager *RoundsManagerFilterer) FilterNewRound(opts *bind.FilterOpts) (*RoundsManagerNewRoundIterator, error) {
+// Solidity: event NewRound(uint256 indexed round, bytes32 blockHash)
+func (_RoundsManager *RoundsManagerFilterer) FilterNewRound(opts *bind.FilterOpts, round []*big.Int) (*RoundsManagerNewRoundIterator, error) {
 
-	logs, sub, err := _RoundsManager.contract.FilterLogs(opts, "NewRound")
+	var roundRule []interface{}
+	for _, roundItem := range round {
+		roundRule = append(roundRule, roundItem)
+	}
+
+	logs, sub, err := _RoundsManager.contract.FilterLogs(opts, "NewRound", roundRule)
 	if err != nil {
 		return nil, err
 	}
 	return &RoundsManagerNewRoundIterator{contract: _RoundsManager.contract, event: "NewRound", logs: logs, sub: sub}, nil
 }
 
-// WatchNewRound is a free log subscription operation binding the contract event 0xa2b5357eea32aeb35142ba36b087f9fe674f34f8b57ce94d30e9f4f572195bcf.
+// WatchNewRound is a free log subscription operation binding the contract event 0x22f2fc17c5daf07db2379b3a03a8ef20a183f761097a58fce219c8a14619e786.
 //
-// Solidity: event NewRound(round uint256)
-func (_RoundsManager *RoundsManagerFilterer) WatchNewRound(opts *bind.WatchOpts, sink chan<- *RoundsManagerNewRound) (event.Subscription, error) {
+// Solidity: event NewRound(uint256 indexed round, bytes32 blockHash)
+func (_RoundsManager *RoundsManagerFilterer) WatchNewRound(opts *bind.WatchOpts, sink chan<- *RoundsManagerNewRound, round []*big.Int) (event.Subscription, error) {
 
-	logs, sub, err := _RoundsManager.contract.WatchLogs(opts, "NewRound")
+	var roundRule []interface{}
+	for _, roundItem := range round {
+		roundRule = append(roundRule, roundItem)
+	}
+
+	logs, sub, err := _RoundsManager.contract.WatchLogs(opts, "NewRound", roundRule)
 	if err != nil {
 		return nil, err
 	}
@@ -702,6 +751,17 @@ func (_RoundsManager *RoundsManagerFilterer) WatchNewRound(opts *bind.WatchOpts,
 			}
 		}
 	}), nil
+}
+
+// ParseNewRound is a log parse operation binding the contract event 0x22f2fc17c5daf07db2379b3a03a8ef20a183f761097a58fce219c8a14619e786.
+//
+// Solidity: event NewRound(uint256 indexed round, bytes32 blockHash)
+func (_RoundsManager *RoundsManagerFilterer) ParseNewRound(log types.Log) (*RoundsManagerNewRound, error) {
+	event := new(RoundsManagerNewRound)
+	if err := _RoundsManager.contract.UnpackLog(event, "NewRound", log); err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 // RoundsManagerParameterUpdateIterator is returned from FilterParameterUpdate and is used to iterate over the raw logs and unpacked data for ParameterUpdate events raised by the RoundsManager contract.
@@ -779,7 +839,7 @@ type RoundsManagerParameterUpdate struct {
 
 // FilterParameterUpdate is a free log retrieval operation binding the contract event 0x9f5033568d78ae30f29f01e944f97b2216493bd19d1b46d429673acff3dcd674.
 //
-// Solidity: event ParameterUpdate(param string)
+// Solidity: event ParameterUpdate(string param)
 func (_RoundsManager *RoundsManagerFilterer) FilterParameterUpdate(opts *bind.FilterOpts) (*RoundsManagerParameterUpdateIterator, error) {
 
 	logs, sub, err := _RoundsManager.contract.FilterLogs(opts, "ParameterUpdate")
@@ -791,7 +851,7 @@ func (_RoundsManager *RoundsManagerFilterer) FilterParameterUpdate(opts *bind.Fi
 
 // WatchParameterUpdate is a free log subscription operation binding the contract event 0x9f5033568d78ae30f29f01e944f97b2216493bd19d1b46d429673acff3dcd674.
 //
-// Solidity: event ParameterUpdate(param string)
+// Solidity: event ParameterUpdate(string param)
 func (_RoundsManager *RoundsManagerFilterer) WatchParameterUpdate(opts *bind.WatchOpts, sink chan<- *RoundsManagerParameterUpdate) (event.Subscription, error) {
 
 	logs, sub, err := _RoundsManager.contract.WatchLogs(opts, "ParameterUpdate")
@@ -824,6 +884,17 @@ func (_RoundsManager *RoundsManagerFilterer) WatchParameterUpdate(opts *bind.Wat
 			}
 		}
 	}), nil
+}
+
+// ParseParameterUpdate is a log parse operation binding the contract event 0x9f5033568d78ae30f29f01e944f97b2216493bd19d1b46d429673acff3dcd674.
+//
+// Solidity: event ParameterUpdate(string param)
+func (_RoundsManager *RoundsManagerFilterer) ParseParameterUpdate(log types.Log) (*RoundsManagerParameterUpdate, error) {
+	event := new(RoundsManagerParameterUpdate)
+	if err := _RoundsManager.contract.UnpackLog(event, "ParameterUpdate", log); err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 // RoundsManagerSetControllerIterator is returned from FilterSetController and is used to iterate over the raw logs and unpacked data for SetController events raised by the RoundsManager contract.
@@ -901,7 +972,7 @@ type RoundsManagerSetController struct {
 
 // FilterSetController is a free log retrieval operation binding the contract event 0x4ff638452bbf33c012645d18ae6f05515ff5f2d1dfb0cece8cbf018c60903f70.
 //
-// Solidity: event SetController(controller address)
+// Solidity: event SetController(address controller)
 func (_RoundsManager *RoundsManagerFilterer) FilterSetController(opts *bind.FilterOpts) (*RoundsManagerSetControllerIterator, error) {
 
 	logs, sub, err := _RoundsManager.contract.FilterLogs(opts, "SetController")
@@ -913,7 +984,7 @@ func (_RoundsManager *RoundsManagerFilterer) FilterSetController(opts *bind.Filt
 
 // WatchSetController is a free log subscription operation binding the contract event 0x4ff638452bbf33c012645d18ae6f05515ff5f2d1dfb0cece8cbf018c60903f70.
 //
-// Solidity: event SetController(controller address)
+// Solidity: event SetController(address controller)
 func (_RoundsManager *RoundsManagerFilterer) WatchSetController(opts *bind.WatchOpts, sink chan<- *RoundsManagerSetController) (event.Subscription, error) {
 
 	logs, sub, err := _RoundsManager.contract.WatchLogs(opts, "SetController")
@@ -946,4 +1017,15 @@ func (_RoundsManager *RoundsManagerFilterer) WatchSetController(opts *bind.Watch
 			}
 		}
 	}), nil
+}
+
+// ParseSetController is a log parse operation binding the contract event 0x4ff638452bbf33c012645d18ae6f05515ff5f2d1dfb0cece8cbf018c60903f70.
+//
+// Solidity: event SetController(address controller)
+func (_RoundsManager *RoundsManagerFilterer) ParseSetController(log types.Log) (*RoundsManagerSetController, error) {
+	event := new(RoundsManagerSetController)
+	if err := _RoundsManager.contract.UnpackLog(event, "SetController", log); err != nil {
+		return nil, err
+	}
+	return event, nil
 }

@@ -3,82 +3,154 @@ package common
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"math/big"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/livepeer/go-livepeer/eth/blockwatch"
+	"github.com/livepeer/go-livepeer/pm"
 	"github.com/livepeer/lpms/ffmpeg"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func dbPath(t *testing.T) string {
-	return fmt.Sprintf("file:%s?mode=memory&cache=shared&_foreign_keys=1", t.Name())
+func TestUpdateKVStore(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	expectedChainID := "1337"
+
+	dbh, dbraw, err := TempDB(t)
+	require.Nil(err)
+
+	defer dbh.Close()
+	defer dbraw.Close()
+
+	var chainID string
+	row := dbraw.QueryRow("SELECT value FROM kv WHERE key = 'chainID'")
+	err = row.Scan(&chainID)
+	assert.EqualError(err, "sql: no rows in result set")
+	assert.Equal("", chainID)
+
+	dbh.updateKVStore("chainID", expectedChainID)
+	row = dbraw.QueryRow("SELECT value FROM kv WHERE key = 'chainID'")
+	err = row.Scan(&chainID)
+	assert.Nil(err)
+	assert.Equal(expectedChainID, chainID)
 }
 
-func tempDB(t *testing.T) (*DB, *sql.DB, error) {
-	dbpath := dbPath(t)
-	dbh, err := InitDB(dbpath)
-	if err != nil {
-		t.Error("Unable to initialize DB ", err)
-		return nil, nil, err
-	}
-	raw, err := sql.Open("sqlite3", dbpath)
-	if err != nil {
-		t.Error("Unable to open raw sqlite db ", err)
-		return nil, nil, err
-	}
-	return dbh, raw, nil
+func TestSelectKVStore(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	key := "foo"
+	value := "bar"
+
+	dbh, dbraw, err := TempDB(t)
+	require.Nil(err)
+	defer dbh.Close()
+	defer dbraw.Close()
+
+	err = dbh.updateKVStore(key, value)
+	require.Nil(err)
+
+	val, err := dbh.selectKVStore(key)
+	assert.Nil(err)
+	assert.Equal(val, value)
+}
+
+func TestChainID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	expectedChainID := "1337"
+
+	dbh, dbraw, err := TempDB(t)
+	require.Nil(err)
+
+	defer dbh.Close()
+	defer dbraw.Close()
+
+	expectedChainIDInt, ok := new(big.Int).SetString(expectedChainID, 10)
+	require.True(ok)
+	dbh.SetChainID(expectedChainIDInt)
+
+	chainID, err := dbh.ChainID()
+	assert.Nil(err)
+	assert.Equal(chainID.String(), expectedChainID)
+}
+
+func TestSetChainID(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	expectedChainID := "1337"
+
+	dbh, dbraw, err := TempDB(t)
+	require.Nil(err)
+
+	defer dbh.Close()
+	defer dbraw.Close()
+
+	expectedChainIDInt, ok := new(big.Int).SetString(expectedChainID, 10)
+	require.True(ok)
+	dbh.SetChainID(expectedChainIDInt)
+
+	chainID, err := dbh.ChainID()
+	assert.Nil(err)
+	assert.Equal(chainID, expectedChainIDInt)
 }
 
 func TestDBLastSeenBlock(t *testing.T) {
-	dbh, dbraw, err := tempDB(t)
+	dbh, dbraw, err := TempDB(t)
 	if err != nil {
 		return
 	}
 	defer dbh.Close()
 	defer dbraw.Close()
 
-	// sanity check default value
-	var val int64
-	var created_at string
-	var updated_at string
-	stmt := "SELECT value, updatedAt FROM kv WHERE key = 'lastBlock'"
-	row := dbraw.QueryRow(stmt)
-	err = row.Scan(&val, &created_at)
-	if err != nil || val != int64(0) {
-		t.Errorf("Unexpected result from sanity check; got %v - %v", err, val)
-		return
-	}
-	// set last updated at timestamp to sometime in the past
-	update_stmt := "UPDATE kv SET updatedAt = datetime('now', '-2 months') WHERE key = 'lastBlock'"
-	_, err = dbraw.Exec(update_stmt) // really should sanity check this result
-	if err != nil {
-		t.Error("Could not update db ", err)
-	}
+	assert := assert.New(t)
+	require := require.New(t)
 
-	// now test set
-	blkval := int64(54321)
-	err = dbh.SetLastSeenBlock(big.NewInt(blkval))
-	if err != nil {
-		t.Error("Unable to set last seen block ", err)
-		return
-	}
-	row = dbraw.QueryRow(stmt)
-	err = row.Scan(&val, &updated_at)
-	if err != nil || val != blkval {
-		t.Errorf("Unexpected result from value check; got %v - %v", err, val)
-		return
-	}
-	// small possibility of a test failure if we executed over a 1s boundary
-	if updated_at != created_at {
-		t.Errorf("Unexpected result from update check; got %v:%v", updated_at, created_at)
-		return
-	}
+	// When there are no headers, return nil
+	blk, err := dbh.LastSeenBlock()
+	assert.Nil(err)
+	assert.Nil(blk)
+
+	// When there is a single header, return its number
+	h0 := defaultMiniHeader()
+	h0.Number = big.NewInt(100)
+	err = dbh.InsertMiniHeader(h0)
+	require.Nil(err)
+
+	blk, err = dbh.LastSeenBlock()
+	assert.Nil(err)
+	assert.Equal(h0.Number, blk)
+
+	// When there are multiple headers, return the latest header number
+	h1 := defaultMiniHeader()
+	h1.Number = big.NewInt(101)
+	err = dbh.InsertMiniHeader(h1)
+	require.Nil(err)
+
+	blk, err = dbh.LastSeenBlock()
+	assert.Nil(err)
+	assert.Equal(h1.Number, blk)
+
+	h2 := defaultMiniHeader()
+	h2.Number = big.NewInt(99)
+	err = dbh.InsertMiniHeader(h2)
+	require.Nil(err)
+
+	blk, err = dbh.LastSeenBlock()
+	assert.Nil(err)
+	assert.Equal(h1.Number, blk)
 }
 
 func TestDBVersion(t *testing.T) {
-	dbh, dbraw, err := tempDB(t)
+	dbh, dbraw, err := TempDB(t)
 	if err != nil {
 		return
 	}
@@ -111,18 +183,6 @@ func TestDBVersion(t *testing.T) {
 	}
 }
 
-func NewStubJob() *DBJob {
-	return &DBJob{
-		ID: 0, streamID: "1", price: 0,
-		profiles: []ffmpeg.VideoProfile{
-			ffmpeg.P720p60fps16x9,
-			ffmpeg.P360p30fps4x3,
-			ffmpeg.P144p30fps16x9,
-		}, broadcaster: ethcommon.Address{}, Transcoder: ethcommon.Address{},
-		startBlock: 1, endBlock: 2,
-	}
-}
-
 func profilesMatch(j1 []ffmpeg.VideoProfile, j2 []ffmpeg.VideoProfile) bool {
 	if len(j1) != len(j2) {
 		return false
@@ -135,236 +195,1081 @@ func profilesMatch(j1 []ffmpeg.VideoProfile, j2 []ffmpeg.VideoProfile) bool {
 	return true
 }
 
-func TestDBJobs(t *testing.T) {
-	dbh, dbraw, err := tempDB(t)
+func TestSelectUpdateOrchs_EmptyOrNilInputs_NoError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
 	defer dbh.Close()
 	defer dbraw.Close()
-	j := NewStubJob()
-	dbh.InsertJob(j)
-	j.ID = 1
-	dbh.InsertJob(j)
-	endBlock := j.endBlock
-	j.ID = 2
-	j.endBlock += 5
-	dbh.InsertJob(j)
-	jobs, err := dbh.ActiveJobs(big.NewInt(0))
-	if err != nil || len(jobs) != 3 {
-		t.Error("Unexpected error in active jobs ", err, len(jobs))
+	require := require.New(t)
+	assert := assert.New(t)
+	require.Nil(err)
+
+	// selecting empty set of orchs
+	orchs, err := dbh.SelectOrchs(nil)
+	require.Nil(err)
+	assert.Empty(orchs)
+
+	// updating a nil value
+	err = dbh.UpdateOrch(nil)
+	require.Nil(err)
+}
+
+func TestSelectUpdateOrchs_AddingUpdatingRow_NoError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	assert := assert.New(t)
+	require.Nil(err)
+
+	// adding row
+	orchAddress := pm.RandAddress().String()
+	orch := &DBOrch{
+		EthereumAddr:      orchAddress,
+		ServiceURI:        "127.0.0.1:8936",
+		PricePerPixel:     1,
+		ActivationRound:   0,
+		DeactivationRound: 0,
+	}
+
+	err = dbh.UpdateOrch(orch)
+	require.Nil(err)
+
+	orchs, err := dbh.SelectOrchs(nil)
+	require.Nil(err)
+	assert.Len(orchs, 1)
+	assert.Equal(orchs[0].ServiceURI, orch.ServiceURI)
+	// Default value for stake should be 0
+	assert.Equal(orchs[0].Stake, int64(0))
+
+	// updating row with same orchAddress
+	orchUpdate := NewDBOrch(orchAddress, "127.0.0.1:8937", 1000, 5, 10, 50)
+	err = dbh.UpdateOrch(orchUpdate)
+	require.Nil(err)
+
+	updatedOrch, err := dbh.SelectOrchs(nil)
+	assert.Len(updatedOrch, 1)
+	assert.Equal(updatedOrch[0].ServiceURI, orchUpdate.ServiceURI)
+	assert.Equal(updatedOrch[0].ActivationRound, orchUpdate.ActivationRound)
+	assert.Equal(updatedOrch[0].DeactivationRound, orchUpdate.DeactivationRound)
+	assert.Equal(updatedOrch[0].PricePerPixel, orchUpdate.PricePerPixel)
+	assert.Equal(updatedOrch[0].Stake, orchUpdate.Stake)
+
+	// updating only serviceURI
+	serviceURIUpdate := &DBOrch{
+		EthereumAddr: orchAddress,
+		ServiceURI:   "127.0.0.1:8938",
+	}
+	err = dbh.UpdateOrch(serviceURIUpdate)
+	require.Nil(err)
+
+	updatedOrch, err = dbh.SelectOrchs(nil)
+	assert.Len(updatedOrch, 1)
+	assert.Equal(updatedOrch[0].ServiceURI, serviceURIUpdate.ServiceURI)
+	assert.Equal(updatedOrch[0].ActivationRound, orchUpdate.ActivationRound)
+	assert.Equal(updatedOrch[0].DeactivationRound, orchUpdate.DeactivationRound)
+	assert.Equal(updatedOrch[0].PricePerPixel, orchUpdate.PricePerPixel)
+	assert.Equal(updatedOrch[0].Stake, orchUpdate.Stake)
+
+	// udpating only pricePerPixel
+	priceUpdate := &DBOrch{
+		EthereumAddr:  orchAddress,
+		PricePerPixel: 99,
+	}
+	err = dbh.UpdateOrch(priceUpdate)
+	require.Nil(err)
+
+	updatedOrch, err = dbh.SelectOrchs(nil)
+	assert.Len(updatedOrch, 1)
+	assert.Equal(updatedOrch[0].ServiceURI, serviceURIUpdate.ServiceURI)
+	assert.Equal(updatedOrch[0].ActivationRound, orchUpdate.ActivationRound)
+	assert.Equal(updatedOrch[0].DeactivationRound, orchUpdate.DeactivationRound)
+	assert.Equal(updatedOrch[0].PricePerPixel, priceUpdate.PricePerPixel)
+	assert.Equal(updatedOrch[0].Stake, orchUpdate.Stake)
+
+	// updating only activationRound
+	activationRoundUpdate := &DBOrch{
+		EthereumAddr:    orchAddress,
+		ActivationRound: 304,
+	}
+	err = dbh.UpdateOrch(activationRoundUpdate)
+	require.Nil(err)
+
+	updatedOrch, err = dbh.SelectOrchs(nil)
+	assert.Len(updatedOrch, 1)
+	assert.Equal(updatedOrch[0].ServiceURI, serviceURIUpdate.ServiceURI)
+	assert.Equal(updatedOrch[0].ActivationRound, activationRoundUpdate.ActivationRound)
+	assert.Equal(updatedOrch[0].DeactivationRound, orchUpdate.DeactivationRound)
+	assert.Equal(updatedOrch[0].PricePerPixel, priceUpdate.PricePerPixel)
+	assert.Equal(updatedOrch[0].Stake, orchUpdate.Stake)
+
+	// updating only deactivationRound
+	deactivationRoundUpdate := &DBOrch{
+		EthereumAddr:      orchAddress,
+		DeactivationRound: 597,
+	}
+	err = dbh.UpdateOrch(deactivationRoundUpdate)
+	require.Nil(err)
+
+	updatedOrch, err = dbh.SelectOrchs(nil)
+	assert.Len(updatedOrch, 1)
+	assert.Equal(updatedOrch[0].ServiceURI, serviceURIUpdate.ServiceURI)
+	assert.Equal(updatedOrch[0].ActivationRound, activationRoundUpdate.ActivationRound)
+	assert.Equal(updatedOrch[0].DeactivationRound, deactivationRoundUpdate.DeactivationRound)
+	assert.Equal(updatedOrch[0].PricePerPixel, priceUpdate.PricePerPixel)
+	assert.Equal(updatedOrch[0].Stake, orchUpdate.Stake)
+
+	// Updating only stake
+	stakeUpdate := &DBOrch{
+		EthereumAddr: orchAddress,
+		Stake:        1000,
+	}
+	err = dbh.UpdateOrch(stakeUpdate)
+	require.Nil(err)
+
+	updatedOrch, err = dbh.SelectOrchs(nil)
+	assert.Len(updatedOrch, 1)
+	assert.NoError(err)
+	assert.Equal(updatedOrch[0].ServiceURI, serviceURIUpdate.ServiceURI)
+	assert.Equal(updatedOrch[0].ActivationRound, activationRoundUpdate.ActivationRound)
+	assert.Equal(updatedOrch[0].DeactivationRound, deactivationRoundUpdate.DeactivationRound)
+	assert.Equal(updatedOrch[0].PricePerPixel, priceUpdate.PricePerPixel)
+	assert.Equal(updatedOrch[0].Stake, stakeUpdate.Stake)
+}
+
+func TestSelectUpdateOrchs_AddingMultipleRows_NoError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	assert := assert.New(t)
+	require.Nil(err)
+
+	// adding one row
+	orchAddress := pm.RandAddress().String()
+
+	orch := NewDBOrch(orchAddress, "127.0.0.1:8936", 1, 0, 0, 0)
+	err = dbh.UpdateOrch(orch)
+	require.Nil(err)
+
+	orchs, err := dbh.SelectOrchs(nil)
+	require.Nil(err)
+	assert.Len(orchs, 1)
+	assert.Equal(orchs[0].ServiceURI, orch.ServiceURI)
+
+	// adding second row
+	orchAddress = pm.RandAddress().String()
+
+	orchAdd := NewDBOrch(orchAddress, "127.0.0.1:8938", 1, 0, 0, 0)
+	err = dbh.UpdateOrch(orchAdd)
+	require.Nil(err)
+
+	orchsUpdated, err := dbh.SelectOrchs(nil)
+	require.Nil(err)
+	assert.Len(orchsUpdated, 2)
+	assert.Equal(orchsUpdated[1].ServiceURI, orchAdd.ServiceURI)
+}
+
+func TestOrchCount(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var orchList []string
+	var nilDB *DB
+	zeroOrchs, nilErr := nilDB.OrchCount(&DBOrchFilter{})
+	assert.Zero(zeroOrchs)
+	assert.Nil(nilErr)
+
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require.Nil(err)
+
+	for i := 0; i < 10; i++ {
+		orch := NewDBOrch("https://127.0.0.1:"+strconv.Itoa(8936+i), pm.RandAddress().String(), 1, int64(i), int64(5+i), 0)
+		orch.PricePerPixel, err = PriceToFixed(big.NewRat(1, int64(5+i)))
+		require.Nil(err)
+		err = dbh.UpdateOrch(orch)
+		require.Nil(err)
+		orchList = append(orchList, orch.ServiceURI)
+	}
+
+	//URI - MaxPrice - ActivationRound - DeactivationRound
+	//127.0.0.1:8936 1/5 0 5
+	//127.0.0.1:8937 1/6 1 6
+	//127.0.0.1:8938 1/7 2 7
+	//127.0.0.1:8939 1/8 3 8
+	//127.0.0.1:8940 1/9 4 9
+	//127.0.0.1:8941 1/10 5 10
+	//127.0.0.1:8942 1/11 6 11
+	//127.0.0.1:8943 1/12 7 12
+	//127.0.0.1:8944 1/13 8 13
+	//127.0.0.1:8945 1/14 9 14
+
+	orchCount, err := dbh.OrchCount(&DBOrchFilter{})
+	assert.Nil(err)
+	assert.Equal(orchCount, len(orchList))
+
+	// use active filter, should return 5 results
+	orchCount, err = dbh.OrchCount(&DBOrchFilter{CurrentRound: big.NewInt(5)})
+	assert.Nil(err)
+	assert.Equal(5, orchCount)
+
+	// use maxPrice filter, should return 5 results
+	orchCount, err = dbh.OrchCount(&DBOrchFilter{MaxPrice: big.NewRat(1, 10)})
+	assert.Nil(err)
+	assert.Equal(5, orchCount)
+
+	// use maxPrice and active O filter, should return 3 results
+	orchCount, err = dbh.OrchCount(&DBOrchFilter{MaxPrice: big.NewRat(1, 8), CurrentRound: big.NewInt(5)})
+	assert.Nil(err)
+	assert.Equal(3, orchCount)
+}
+
+func TestDBFilterOrchs(t *testing.T) {
+	assert := assert.New(t)
+	var orchList []string
+	var orchAddrList []string
+	var nilDb *DB
+	nilOrchs, nilErr := nilDb.SelectOrchs(&DBOrchFilter{MaxPrice: big.NewRat(1, 1)})
+	assert.Nil(nilOrchs)
+	assert.Nil(nilErr)
+
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	for i := 0; i < 10; i++ {
+		orch := NewDBOrch(pm.RandAddress().String(), "https://127.0.0.1:"+strconv.Itoa(8936+i), 1, int64(i), int64(5+i), 0)
+		orch.PricePerPixel, err = PriceToFixed(big.NewRat(1, int64(5+i)))
+		require.Nil(err)
+		err = dbh.UpdateOrch(orch)
+		require.Nil(err)
+		orchList = append(orchList, orch.ServiceURI)
+		orchAddrList = append(orchAddrList, orch.EthereumAddr)
+	}
+
+	//URI - MaxPrice - ActivationRound - DeactivationRound
+	//127.0.0.1:8936 1/5 0 5
+	//127.0.0.1:8937 1/6 1 6
+	//127.0.0.1:8938 1/7 2 7
+	//127.0.0.1:8939 1/8 3 8
+	//127.0.0.1:8940 1/9 4 9
+	//127.0.0.1:8941 1/10 5 10
+	//127.0.0.1:8942 1/11 6 11
+	//127.0.0.1:8943 1/12 7 12
+	//127.0.0.1:8944 1/13 8 13
+	//127.0.0.1:8945 1/14 9 14
+
+	orchsUpdated, err := dbh.SelectOrchs(nil)
+	require.Nil(err)
+	assert.Len(orchsUpdated, 10)
+
+	// Passing in nil max price to filterOrchs returns a query for selectOrchs
+	orchsFiltered, err := dbh.SelectOrchs(nil)
+	require.Nil(err)
+	assert.Len(orchsFiltered, 10)
+
+	// Passing in a higher maxPrice than all orchs to filterOrchs returns all orchs
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{MaxPrice: big.NewRat(10, 1)})
+	require.Nil(err)
+	assert.Len(orchsFiltered, 10)
+
+	// Passing in a lower price than all orchs returns no orchs
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{MaxPrice: big.NewRat(1, 15)})
+	require.Nil(err)
+	assert.Len(orchsFiltered, 0)
+
+	// Passing in 1/10 returns 5 orchs
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{MaxPrice: big.NewRat(1, 10)})
+	require.Nil(err)
+	assert.Len(orchsFiltered, 5)
+
+	// Select only active orchs: activationRound <= currentRound && currentRound < deactivationRound
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{CurrentRound: big.NewInt(5)})
+	assert.Nil(err)
+	// Should return 5 results, index 1 to 5
+	assert.Len(orchsFiltered, 5)
+	for _, o := range orchsFiltered {
+		assert.Contains(orchList[1:6], o.ServiceURI)
+	}
+
+	// Select only active orchs and orchs that pass price filter
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{MaxPrice: big.NewRat(1, 8), CurrentRound: big.NewInt(5)})
+	assert.Nil(err)
+	// Should return 3 results, index 3 to 5
+	assert.Len(orchsFiltered, 3)
+	for _, o := range orchsFiltered {
+		assert.Contains(orchList[3:6], o.ServiceURI)
+	}
+
+	// Select only active orchs that pass price filter and that are included in Addresses list
+	filterAddrs := []ethcommon.Address{ethcommon.HexToAddress(orchAddrList[3]), ethcommon.HexToAddress(orchAddrList[4])}
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{MaxPrice: big.NewRat(1, 8), CurrentRound: big.NewInt(5), Addresses: filterAddrs})
+	assert.Nil(err)
+	assert.Len(orchsFiltered, 2)
+	for _, o := range orchsFiltered {
+		assert.Contains(orchList[3:5], o.ServiceURI)
+		assert.Contains(orchAddrList[3:5], o.EthereumAddr)
+	}
+
+	// Select orchs that are included in Addresses list when list length > 1
+	filterAddrs = []ethcommon.Address{ethcommon.HexToAddress(orchAddrList[0]), ethcommon.HexToAddress(orchAddrList[1])}
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{Addresses: filterAddrs})
+	assert.Nil(err)
+	assert.Len(orchsFiltered, 2)
+	for _, o := range orchsFiltered {
+		assert.Contains(orchList[0:2], o.ServiceURI)
+		assert.Contains(orchAddrList[0:2], o.EthereumAddr)
+	}
+
+	// Select orchs that are included in Addresses list when list length = 0
+	filterAddrs = []ethcommon.Address{ethcommon.HexToAddress(orchAddrList[1])}
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{Addresses: filterAddrs})
+	assert.Nil(err)
+	assert.Len(orchsFiltered, 1)
+	assert.Equal(orchList[1], orchsFiltered[0].ServiceURI)
+	assert.Equal(orchAddrList[1], orchsFiltered[0].EthereumAddr)
+
+	// Empty result when no orchs match Addresses list
+	filterAddrs = []ethcommon.Address{ethcommon.BytesToAddress([]byte("foobarbaz"))}
+	orchsFiltered, err = dbh.SelectOrchs(&DBOrchFilter{Addresses: filterAddrs})
+	assert.Nil(err)
+	assert.Len(orchsFiltered, 0)
+}
+
+func TestDBUnbondingLocks(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	if err != nil {
+		t.Error(err)
 		return
 	}
-	jobs, err = dbh.ActiveJobs(big.NewInt(endBlock))
-	if err != nil || len(jobs) != 1 || jobs[0].ID != 2 {
-		t.Error("Unexpected error in active jobs ", err, len(jobs))
+
+	delegator := ethcommon.Address{}
+
+	// Check insertion
+	err = dbh.InsertUnbondingLock(big.NewInt(0), delegator, big.NewInt(10), big.NewInt(100))
+	if err != nil {
+		t.Error(err)
 		return
 	}
-	if !profilesMatch(jobs[0].profiles, j.profiles) {
-		t.Error("Mismatched profiles in query")
+	err = dbh.InsertUnbondingLock(big.NewInt(1), delegator, big.NewInt(10), big.NewInt(100))
+	if err != nil {
+		t.Error(err)
+		return
 	}
-	// check stop reason filter
-	dbh.SetStopReason(big.NewInt(j.ID), "insufficient lolz")
-	jobs, err = dbh.ActiveJobs(big.NewInt(0))
-	if err != nil || len(jobs) != 2 {
-		t.Error("Unexpected error in active jobs ", err, len(jobs))
+	err = dbh.InsertUnbondingLock(big.NewInt(2), delegator, big.NewInt(10), big.NewInt(100))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// Check # of unbonding locks
+	var numUnbondingLocks int
+	row := dbraw.QueryRow("SELECT count(*) FROM unbondingLocks")
+	err = row.Scan(&numUnbondingLocks)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if numUnbondingLocks != 3 {
+		t.Error("Unexpected number of unbonding locks; expected 3 total, got ", numUnbondingLocks)
+		return
+	}
+
+	// Check unbonding lock IDs
+	unbondingLockIDs, err := dbh.UnbondingLockIDs()
+	if err != nil {
+		t.Error("Error retrieving unbonding lock IDs ", err)
+		return
+	}
+	if len(unbondingLockIDs) != 3 {
+		t.Error("Unexpected number of unbonding lock IDs; expected 3, got ", len(unbondingLockIDs))
+		return
+	}
+	if unbondingLockIDs[0].Cmp(big.NewInt(0)) != 0 {
+		t.Error("Unexpected unbonding lock ID; expected 0, got ", unbondingLockIDs[0])
+		return
+	}
+
+	// Check for failure with duplicate ID
+	err = dbh.InsertUnbondingLock(big.NewInt(0), delegator, big.NewInt(10), big.NewInt(100))
+	if err == nil {
+		t.Error("Expected constraint to fail; duplicate unbonding lock ID and delegator")
+		return
+	}
+
+	// Check retrieving when all unbonding locks are unused
+	unbondingLocks, err := dbh.UnbondingLocks(nil)
+	if err != nil {
+		t.Error("Error retrieving unbonding locks ", err)
+		return
+	}
+	if len(unbondingLocks) != 3 {
+		t.Error("Unexpected number of unbonding locks; expected 3 total, got ", len(unbondingLocks))
+		return
+	}
+	if unbondingLocks[0].ID != 0 {
+		t.Error("Unexpected unbonding lock ID; expected 0, got ", unbondingLocks[0].ID)
+		return
+	}
+	if unbondingLocks[0].Delegator != delegator {
+		t.Errorf("Unexpected unbonding lock delegator; expected %v, got %v", delegator, unbondingLocks[0].Delegator)
+		return
+	}
+	if unbondingLocks[0].Amount.Cmp(big.NewInt(10)) != 0 {
+		t.Errorf("Unexpected unbonding lock amount; expected 10, got %v", unbondingLocks[0].Amount)
+		return
+	}
+	if unbondingLocks[0].WithdrawRound != 100 {
+		t.Errorf("Unexpected unbonding lock withdraw round; expected 100, got %v", unbondingLocks[0].WithdrawRound)
+		return
+	}
+
+	// Check update
+	err = dbh.UseUnbondingLock(big.NewInt(0), delegator, big.NewInt(15))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	var usedBlock int64
+	row = dbraw.QueryRow("SELECT usedBlock FROM unbondingLocks WHERE id = 0 AND delegator = ?", delegator.Hex())
+	err = row.Scan(&usedBlock)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if usedBlock != 15 {
+		t.Errorf("Unexpected used block; expected 15, got %v", usedBlock)
+		return
+	}
+	err = dbh.UseUnbondingLock(big.NewInt(1), delegator, big.NewInt(16))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	row = dbraw.QueryRow("SELECT usedBlock FROM unbondingLocks WHERE id = 1 AND delegator = ?", delegator.Hex())
+	err = row.Scan(&usedBlock)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if usedBlock != 16 {
+		t.Errorf("Unexpected used block; expected 16; got %v", usedBlock)
+		return
+	}
+
+	// Check retrieving when some unbonding locks are used
+	unbondingLocks, err = dbh.UnbondingLocks(nil)
+	if err != nil {
+		t.Error("Error retrieving unbonding locks ", err)
+		return
+	}
+	if len(unbondingLocks) != 1 {
+		t.Error("Unexpected number of unbonding locks; expected 1 total, got ", len(unbondingLocks))
+		return
+	}
+
+	err = dbh.InsertUnbondingLock(big.NewInt(3), delegator, big.NewInt(10), big.NewInt(150))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	err = dbh.InsertUnbondingLock(big.NewInt(4), delegator, big.NewInt(10), big.NewInt(200))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// Check retrieving withdrawable unbonding locks
+	unbondingLocks, err = dbh.UnbondingLocks(big.NewInt(99))
+	if err != nil {
+		t.Error("Error retrieving unbonding locks ", err)
+		return
+	}
+	if len(unbondingLocks) != 0 {
+		t.Error("Unexpected number of withdrawable unbonding locks; expected 0, got ", len(unbondingLocks))
+		return
+	}
+	unbondingLocks, err = dbh.UnbondingLocks(big.NewInt(150))
+	if err != nil {
+		t.Error("Error retrieving unbonding locks ", err)
+		return
+	}
+	if len(unbondingLocks) != 2 {
+		t.Error("Unexpected number of unbonding locks; expected 2, got ", len(unbondingLocks))
+		return
+	}
+
+	// Check deleting existing lock
+	err = dbh.DeleteUnbondingLock(big.NewInt(3), delegator)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	unbondingLocks, err = dbh.UnbondingLocks(nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if len(unbondingLocks) != 2 {
+		t.Error("Unxpected number of unbonding locks after deletion; expected 2, got", len(unbondingLocks))
+		return
+	}
+
+	// Check setting usedBlock to NULL for existing lock
+	err = dbh.UseUnbondingLock(big.NewInt(1), delegator, nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	unbondingLocks, err = dbh.UnbondingLocks(nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if len(unbondingLocks) != 3 {
+		t.Error("Unexpected number of unbonding locks after reverting used lock; expected 3, got", len(unbondingLocks))
+		return
 	}
 }
 
-func TestDBReceipts(t *testing.T) {
-	dbh, dbraw, err := tempDB(t)
+func TestWinningTicketCount(t *testing.T) {
+	assert := assert.New(t)
+	dbh, dbraw, err := TempDB(t)
 	defer dbh.Close()
 	defer dbraw.Close()
-	jid := big.NewInt(0)
-	ir := func(j *big.Int, seq int) error {
-		b := []byte("")
-		n := time.Now()
-		return dbh.InsertReceipt(j, int64(seq), "", b, b, b, n, n)
-	}
-	err = ir(jid, 1)
-	if err == nil {
-		t.Error("Expected foreign key constraint to fail; nonexistent job")
-		return
-	}
-	job := NewStubJob()
-	dbh.InsertJob(job)
-	err = ir(jid, 1)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	err = ir(jid, 1)
-	if err == nil {
-		t.Error("Expected constraint to fail; duplicate seq id")
-		return
-	}
-	err = ir(jid, 2)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	// insert receipt for a different job, but same seqid
-	job = NewStubJob()
-	job.ID = 1
-	dbh.InsertJob(job)
-	err = ir(big.NewInt(job.ID), 1)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	// check unclaimed receipts
-	receipts, err := dbh.UnclaimedReceipts()
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if len(receipts) != 2 {
-		t.Error("Unxpected number of jobs in receipts")
-		return
-	}
-	if len(receipts[0]) != 2 || len(receipts[1]) != 1 {
-		t.Error("Unexpected number of receipts for job")
-		return
+	require := require.New(t)
+	require.Nil(err)
+
+	sender := pm.RandAddress()
+
+	_, ticket, sig, recipientRand := defaultWinningTicket(t)
+	ticket.Sender = sender
+	count, err := dbh.WinningTicketCount(sender)
+	assert.Nil(err)
+	assert.Equal(count, 0)
+
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	})
+	require.Nil(err)
+
+	_, ticket, sig, recipientRand = defaultWinningTicket(t)
+	ticket.Sender = pm.RandAddress()
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	})
+	require.Nil(err)
+
+	count, err = dbh.WinningTicketCount(sender)
+	assert.Nil(err)
+	assert.Equal(count, 1)
+
+	// add a submitted ticket , should not change count
+	_, ticket, sig, recipientRand = defaultWinningTicket(t)
+	ticket.Sender = sender
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	})
+	dbh.MarkWinningTicketRedeemed(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	}, pm.RandHash())
+	require.Nil(err)
+
+	count, err = dbh.WinningTicketCount(sender)
+	assert.Nil(err)
+	assert.Equal(count, 1)
+}
+
+func TestInsertWinningTicket_GivenValidInputs_InsertsOneRowCorrectly(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, sig, recipientRand := defaultWinningTicket(t)
+
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	})
+	require.Nil(err)
+
+	row := dbraw.QueryRow("SELECT sender, recipient, faceValue, winProb, senderNonce, recipientRand, recipientRandHash, sig, creationRound, creationRoundBlockHash, paramsExpirationBlock FROM ticketQueue")
+	var actualSender, actualRecipient, actualRecipientRandHash, actualCreationRoundBlockHash string
+	var actualFaceValueBytes, actualWinProbBytes, actualRecipientRandBytes, actualSig []byte
+	var actualSenderNonce uint32
+	var actualCreationRound int64
+	var paramsExpirationBlock int64
+	err = row.Scan(&actualSender, &actualRecipient, &actualFaceValueBytes, &actualWinProbBytes, &actualSenderNonce, &actualRecipientRandBytes, &actualRecipientRandHash, &actualSig, &actualCreationRound, &actualCreationRoundBlockHash, &paramsExpirationBlock)
+
+	assert := assert.New(t)
+	assert.Equal(ticket.Sender.Hex(), actualSender)
+	assert.Equal(ticket.Recipient.Hex(), actualRecipient)
+	assert.Equal(ticket.FaceValue, new(big.Int).SetBytes(actualFaceValueBytes))
+	assert.Equal(ticket.WinProb, new(big.Int).SetBytes(actualWinProbBytes))
+	assert.Equal(ticket.SenderNonce, actualSenderNonce)
+	assert.Equal(recipientRand, new(big.Int).SetBytes(actualRecipientRandBytes))
+	assert.Equal(ticket.RecipientRandHash, ethcommon.HexToHash(actualRecipientRandHash))
+	assert.Equal(ticket.CreationRound, actualCreationRound)
+	assert.Equal(ticket.CreationRoundBlockHash, ethcommon.HexToHash(actualCreationRoundBlockHash))
+	assert.Equal(ticket.ParamsExpirationBlock.Int64(), paramsExpirationBlock)
+	assert.Equal(sig, actualSig)
+
+	ticketsCount := getRowCountOrFatal("SELECT count(*) FROM ticketQueue", dbraw, t)
+	assert.Equal(1, ticketsCount)
+}
+
+func TestInsertWinningTicket_GivenMaxValueInputs_InsertsOneRowCorrectly(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, sig, recipientRand := defaultWinningTicket(t)
+	ticket.FaceValue = MaxUint256OrFatal(t)
+	ticket.WinProb = MaxUint256OrFatal(t)
+	ticket.SenderNonce = math.MaxUint32
+
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	})
+	require.Nil(err)
+
+	row := dbraw.QueryRow("SELECT sender, recipient, faceValue, winProb, senderNonce, recipientRand, recipientRandHash, sig, creationRound, creationRoundBlockHash, paramsExpirationBlock FROM ticketQueue")
+	var actualSender, actualRecipient, actualRecipientRandHash, actualCreationRoundBlockHash string
+	var actualFaceValueBytes, actualWinProbBytes, actualRecipientRandBytes, actualSig []byte
+	var actualSenderNonce uint32
+	var actualCreationRound int64
+	var paramsExpirationBlock int64
+	err = row.Scan(&actualSender, &actualRecipient, &actualFaceValueBytes, &actualWinProbBytes, &actualSenderNonce, &actualRecipientRandBytes, &actualRecipientRandHash, &actualSig, &actualCreationRound, &actualCreationRoundBlockHash, &paramsExpirationBlock)
+
+	assert := assert.New(t)
+	assert.Equal(ticket.Sender.Hex(), actualSender)
+	assert.Equal(ticket.Recipient.Hex(), actualRecipient)
+	assert.Equal(ticket.FaceValue, new(big.Int).SetBytes(actualFaceValueBytes))
+	assert.Equal(ticket.WinProb, new(big.Int).SetBytes(actualWinProbBytes))
+	assert.Equal(ticket.SenderNonce, actualSenderNonce)
+	assert.Equal(recipientRand, new(big.Int).SetBytes(actualRecipientRandBytes))
+	assert.Equal(ticket.RecipientRandHash, ethcommon.HexToHash(actualRecipientRandHash))
+	assert.Equal(ticket.CreationRound, actualCreationRound)
+	assert.Equal(ticket.CreationRoundBlockHash, ethcommon.HexToHash(actualCreationRoundBlockHash))
+	assert.Equal(ticket.ParamsExpirationBlock.Int64(), paramsExpirationBlock)
+	assert.Equal(sig, actualSig)
+
+	ticketsCount := getRowCountOrFatal("SELECT count(*) FROM ticketQueue", dbraw, t)
+	assert.Equal(1, ticketsCount)
+}
+
+func TestStoreWinningTicket_GivenNilTicket_ReturnsError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	err = dbh.StoreWinningTicket(nil)
+
+	assert := assert.New(t)
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil ticket")
+
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{})
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil ticket")
+}
+
+func TestStoreWinningTicket_GivenNilSig_ReturnsError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, _, recipientRand := defaultWinningTicket(t)
+
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		RecipientRand: recipientRand,
+	})
+
+	assert := assert.New(t)
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil sig")
+}
+
+func TestStoreWinningTicket_GivenNilRecipientRand_ReturnsError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, sig, _ := defaultWinningTicket(t)
+
+	err = dbh.StoreWinningTicket(&pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: nil,
+	})
+
+	assert := assert.New(t)
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil recipientRand")
+}
+
+func TestSelectEarliestWinningTicket(t *testing.T) {
+	assert := assert.New(t)
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, sig, recipientRand := defaultWinningTicket(t)
+	ticket.Sender = ethcommon.HexToAddress("charizard")
+
+	signedTicket0 := &pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
 	}
 
-	// Receipt checking functions.
+	_, ticket, sig, recipientRand = defaultWinningTicket(t)
+	ticket.Sender = ethcommon.HexToAddress("pikachu")
+	signedTicket1 := &pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
+	}
+	err = dbh.StoreWinningTicket(signedTicket1)
+	require.Nil(err)
 
-	// Ensure that the receipt we just inserted exists
-	exists, err := dbh.ReceiptExists(big.NewInt(job.ID), 1)
-	if err != nil {
-		t.Error(err)
-		return
+	// no tickets found
+	earliest, err := dbh.SelectEarliestWinningTicket(ethcommon.HexToAddress("charizard"))
+	assert.Nil(err)
+	assert.Nil(earliest)
+
+	err = dbh.StoreWinningTicket(signedTicket0)
+	require.Nil(err)
+	earliest, err = dbh.SelectEarliestWinningTicket(ethcommon.HexToAddress("charizard"))
+	assert.Nil(err)
+	assert.Equal(signedTicket0, earliest)
+
+	_, ticket, sig, recipientRand = defaultWinningTicket(t)
+	ticket.Sender = ethcommon.HexToAddress("charizard")
+	signedTicket2 := &pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           pm.RandBytes(32),
+		RecipientRand: new(big.Int).SetBytes(pm.RandBytes(32)),
 	}
-	if !exists {
-		t.Error("Expected segment to exist in DB")
-		return
+
+	err = dbh.StoreWinningTicket(signedTicket2)
+	require.Nil(err)
+
+	earliest, err = dbh.SelectEarliestWinningTicket(ethcommon.HexToAddress("charizard"))
+	assert.Nil(err)
+	assert.Equal(earliest, signedTicket0)
+
+	// Test excluding submitted tickets
+	err = dbh.MarkWinningTicketRedeemed(signedTicket0, pm.RandHash())
+	require.Nil(err)
+	earliest, err = dbh.SelectEarliestWinningTicket(ethcommon.HexToAddress("charizard"))
+	assert.Equal(earliest, signedTicket2)
+}
+
+func TestMarkWinningTicketRedeemed_GivenNilTicket_ReturnsError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	err = dbh.MarkWinningTicketRedeemed(nil, ethcommon.Hash{})
+
+	assert := assert.New(t)
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil ticket")
+
+	err = dbh.MarkWinningTicketRedeemed(&pm.SignedTicket{}, ethcommon.Hash{})
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil ticket")
+}
+
+func TestMarkWinningTicketRedeemed_GivenNilSig_ReturnsError(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, _, recipientRand := defaultWinningTicket(t)
+
+	err = dbh.MarkWinningTicketRedeemed(&pm.SignedTicket{
+		Ticket:        ticket,
+		RecipientRand: recipientRand,
+	}, ethcommon.Hash{})
+
+	assert := assert.New(t)
+	assert.NotNil(err)
+	assert.Contains(err.Error(), "nil sig")
+}
+
+func TestMarkWinningTicketRedeemed_Update_TxHash_And_SubmittedAt(t *testing.T) {
+	assert := assert.New(t)
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, sig, recipientRand := defaultWinningTicket(t)
+
+	txHash := pm.RandHash()
+	signedT := &pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
 	}
-	// Ensure a nonexistent receipt does not exist: valid job, invalid seg
-	exists, err = dbh.ReceiptExists(big.NewInt(job.ID), 10)
-	if err != nil {
-		t.Error(err)
-		return
+	// test no record found
+	err = dbh.MarkWinningTicketRedeemed(signedT, txHash)
+	assert.EqualError(err, fmt.Sprintf("no record found for sig=0x%x", sig))
+
+	// store a record
+	err = dbh.StoreWinningTicket(signedT)
+	require.Nil(err)
+
+	// success
+	err = dbh.MarkWinningTicketRedeemed(signedT, txHash)
+	assert.Nil(err)
+	row := dbraw.QueryRow("SELECT txHash, redeemedAt FROM ticketQueue WHERE sig=?", sig)
+	var txHashActual string
+	var redeemedAt time.Time
+	err = row.Scan(&txHashActual, &redeemedAt)
+	require.Nil(err)
+	assert.Equal(txHash.Hex(), txHashActual)
+	assert.InDelta(redeemedAt.Day(), time.Now().Day(), 1)
+}
+
+func TestRemoveWinningTicket(t *testing.T) {
+	assert := assert.New(t)
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	require := require.New(t)
+	require.Nil(err)
+
+	_, ticket, sig, recipientRand := defaultWinningTicket(t)
+
+	signedTicket := &pm.SignedTicket{
+		Ticket:        ticket,
+		Sig:           sig,
+		RecipientRand: recipientRand,
 	}
-	if exists {
-		t.Error("Did not expect a segment to exist")
-		return
+
+	err = dbh.StoreWinningTicket(signedTicket)
+	require.Nil(err)
+
+	// confirm ticket is added correctly
+	count, err := dbh.WinningTicketCount(ticket.Sender)
+	require.Nil(err)
+	require.Equal(count, 1)
+
+	// removing the wrong ticket should return nil
+	signedTicketDup := *signedTicket
+	signedTicketDup.Sig = pm.RandBytes(32)
+	err = dbh.RemoveWinningTicket(&signedTicketDup)
+	assert.NoError(err)
+	// confirm ticket is not removed
+	count, err = dbh.WinningTicketCount(signedTicket.Sender)
+	require.Nil(err)
+	assert.Equal(count, 1)
+
+	err = dbh.RemoveWinningTicket(signedTicket)
+	assert.Nil(err)
+	// confirm ticket is removed correctly
+	count, _ = dbh.WinningTicketCount(ticket.Sender)
+	require.Equal(count, 0)
+}
+
+func TestInsertMiniHeader_ReturnsFindLatestMiniHeader(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	assert := assert.New(t)
+	require := require.New(t)
+	require.Nil(err)
+
+	h0 := defaultMiniHeader()
+	err = dbh.InsertMiniHeader(h0)
+	require.Nil(err)
+
+	h0db, err := dbh.FindLatestMiniHeader()
+	require.Nil(err)
+	assert.Equal(h0, h0db)
+
+	// Test FindLatestMiniHeader with 2 blocks
+	h1 := defaultMiniHeader()
+	h1.Number = big.NewInt(451)
+	h1.Logs = append(h1.Logs, types.Log{
+		Topics:    []common.Hash{pm.RandHash(), pm.RandHash()},
+		Data:      pm.RandBytes(32),
+		BlockHash: h1.Hash,
+	})
+	err = dbh.InsertMiniHeader(h1)
+	require.Nil(err)
+	earliest, err := dbh.FindLatestMiniHeader()
+	require.Nil(err)
+	assert.Equal(h1, earliest)
+	assert.Equal(len(h1.Logs), 2)
+
+	// test MiniHeader = nil error
+	err = dbh.InsertMiniHeader(nil)
+	assert.EqualError(err, "must provide a MiniHeader")
+
+	// test blocknumber = nil error
+	h1.Number = nil
+	err = dbh.InsertMiniHeader(h1)
+	assert.EqualError(err, "no block number found")
+}
+
+func TestFindAllMiniHeadersSortedByNumber(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
+	defer dbh.Close()
+	defer dbraw.Close()
+	assert := assert.New(t)
+	require := require.New(t)
+	require.Nil(err)
+
+	added := make([]*blockwatch.MiniHeader, 10)
+	for i := 0; i < 10; i++ {
+		h := defaultMiniHeader()
+		h.Number = big.NewInt(int64(i))
+		if i%2 == 0 {
+			h.Logs = append(h.Logs, types.Log{
+				Topics:    []common.Hash{pm.RandHash(), pm.RandHash()},
+				Data:      pm.RandBytes(32),
+				BlockHash: h.Hash,
+			})
+		}
+		err = dbh.InsertMiniHeader(h)
+		require.Nil(err)
+		added[9-i] = h
 	}
-	// Ensure a nonexistent receipt does not exist: invalid job, seg exists elsewhere
-	exists, err = dbh.ReceiptExists(big.NewInt(10), 1)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if exists {
-		t.Error("Did not expect a segment to exist")
-		return
+
+	headers, err := dbh.FindAllMiniHeadersSortedByNumber()
+	for i, h := range headers {
+		assert.Equal(h.Number.Int64(), int64(len(headers)-1-i))
+		assert.Equal(h, added[i])
+		// even = 1 log , uneven = 2 logs
+		if i%2 == 0 {
+			assert.Len(h.Logs, 1)
+		} else {
+			assert.Len(h.Logs, 2)
+		}
 	}
 }
 
-func TestDBClaims(t *testing.T) {
-	dbh, dbraw, err := tempDB(t)
+func TestDeleteMiniHeader(t *testing.T) {
+	dbh, dbraw, err := TempDB(t)
 	defer dbh.Close()
 	defer dbraw.Close()
+	assert := assert.New(t)
+	require := require.New(t)
+	require.Nil(err)
 
-	ir := func(j int64, seq int) error {
-		b := []byte("")
-		n := time.Now()
-		return dbh.InsertReceipt(big.NewInt(j), int64(seq), "", b, b, b, n, n)
-	}
+	h0 := defaultMiniHeader()
+	err = dbh.InsertMiniHeader(h0)
+	require.Nil(err)
 
-	job := NewStubJob()
-	dbh.InsertJob(job)
-	ir(job.ID, 0)
-	ir(job.ID, 1)
-	ir(job.ID, 4)
-	ir(job.ID, 5)
-	job.ID++
-	dbh.InsertJob(job)
-	ir(job.ID, 1)
-	ir(job.ID, 2)
+	h0db, err := dbh.FindLatestMiniHeader()
+	require.Nil(err)
+	assert.Equal(h0, h0db)
 
-	cidp, err := dbh.InsertClaim(big.NewInt(0), [2]int64{0, 1}, [32]byte{})
-	if err != nil || cidp == nil {
-		t.Errorf("Error inserting claim %v %v", err, cidp)
-		return
+	err = dbh.DeleteMiniHeader(h0.Hash)
+	require.Nil(err)
+	headers, err := dbh.FindAllMiniHeadersSortedByNumber()
+	require.Nil(err)
+	assert.Equal(len(headers), 0)
+
+	// test FindLatestMiniHeader error path
+	h0db, err = dbh.FindLatestMiniHeader()
+	assert.Nil(err)
+
+	// Test header to be deleted doesn't exist
+	err = dbh.DeleteMiniHeader(h0.Hash)
+	assert.Nil(err)
+	headers, _ = dbh.FindAllMiniHeadersSortedByNumber()
+	assert.Equal(len(headers), 0)
+
+	// test correct amount of remaining headers when more than 1
+	err = dbh.InsertMiniHeader(h0)
+	require.Nil(err)
+	h1 := defaultMiniHeader()
+	err = dbh.InsertMiniHeader(h1)
+	require.Nil(err)
+	err = dbh.DeleteMiniHeader(h0.Hash)
+	require.Nil(err)
+	headers, err = dbh.FindAllMiniHeadersSortedByNumber()
+	assert.Equal(len(headers), 1)
+	assert.Nil(err)
+	assert.Equal(headers[0].Hash, h1.Hash)
+}
+
+func defaultWinningTicket(t *testing.T) (sessionID string, ticket *pm.Ticket, sig []byte, recipientRand *big.Int) {
+	sessionID = "foo bar"
+	ticket = &pm.Ticket{
+		Sender:                pm.RandAddress(),
+		Recipient:             pm.RandAddress(),
+		FaceValue:             big.NewInt(1234),
+		WinProb:               big.NewInt(2345),
+		SenderNonce:           uint32(123),
+		RecipientRandHash:     pm.RandHash(),
+		ParamsExpirationBlock: big.NewInt(1337),
 	}
-	cidp, err = dbh.InsertClaim(big.NewInt(0), [2]int64{4, 5}, [32]byte{})
-	if err != nil || cidp == nil {
-		t.Errorf("Error inserting claim %v %v", err, cidp)
-		return
+	sig = pm.RandBytes(42)
+	recipientRand = big.NewInt(4567)
+	return
+}
+
+func getRowCountOrFatal(query string, dbraw *sql.DB, t *testing.T) int {
+	var count int
+	row := dbraw.QueryRow(query)
+	err := row.Scan(&count)
+	require.Nil(t, err)
+
+	return count
+}
+
+func defaultMiniHeader() *blockwatch.MiniHeader {
+	block := &blockwatch.MiniHeader{
+		Number: big.NewInt(450),
+		Parent: pm.RandHash(),
+		Hash:   pm.RandHash(),
 	}
-	cidp, err = dbh.InsertClaim(big.NewInt(1), [2]int64{1, 2}, [32]byte{})
-	if err != nil || cidp == nil {
-		t.Errorf("Error inserting claim %v %v", err, cidp)
-		return
+	log := types.Log{
+		Topics:    []common.Hash{pm.RandHash(), pm.RandHash()},
+		Data:      pm.RandBytes(32),
+		BlockHash: block.Hash,
 	}
-	// check job 0 claim 0
-	var nbreceipts int
-	row := dbraw.QueryRow("SELECT count(*) FROM receipts WHERE claimID = 0 AND jobID = 0")
-	err = row.Scan(&nbreceipts)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if nbreceipts != 2 {
-		t.Errorf("Mismatched receipts for claim: expected 2 got %d", nbreceipts)
-		return
-	}
-	// check job 0 claim 1
-	row = dbraw.QueryRow("SELECT count(*) FROM receipts WHERE claimID = 1 AND jobID = 0")
-	err = row.Scan(&nbreceipts)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if nbreceipts != 2 {
-		t.Errorf("Mismatched receipts for claim: expected 2 got %d", nbreceipts)
-		return
-	}
-	// check job 1 claim 0
-	row = dbraw.QueryRow("SELECT count(*) FROM receipts WHERE claimID = 0 AND jobID = 1")
-	err = row.Scan(&nbreceipts)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if nbreceipts != 2 {
-		t.Errorf("Mismatched receipts for claim: expected 2 got %d", nbreceipts)
-		return
-	}
-	// Sanity check number of claims
-	var nbclaims int
-	row = dbraw.QueryRow("SELECT count(*) FROM claims")
-	err = row.Scan(&nbclaims)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if nbclaims != 3 {
-		t.Error("Unexpected number of claims; expected 3 total, got ", nbclaims)
-		return
-	}
-	// check claim status
-	var status string
-	q := "SELECT status FROM claims WHERE jobID = 0 AND id = 1"
-	s := "over the moon"
-	row = dbraw.QueryRow(q)
-	err = row.Scan(&status)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	// sanity check value
-	if status == s {
-		t.Error("Expected some status value other than ", status)
-		return
-	}
-	err = dbh.SetClaimStatus(big.NewInt(0), 1, s)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	row = dbraw.QueryRow(q)
-	err = row.Scan(&status)
-	if err != nil || status != s {
-		t.Errorf("Unexpected: error %v, got %v but wanted %v", err, status, s)
-		return
-	}
+	block.Logs = []types.Log{log}
+	return block
 }

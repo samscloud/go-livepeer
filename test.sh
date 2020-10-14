@@ -1,35 +1,30 @@
+#!/usr/bin/env bash
+
+set -eux
+
 #Test script to run all the tests for continuous integration
 
+go test ./...
+
 cd core
-go test -logtostderr=true
-t1=$?
+# Be more strict with load balancer tests: run with race detector enabled
+go test -run LB_ -race
+# Be more strict with nvidia tests: run with race detector enabled
+go test -run Nvidia_ -race
+go test -run Capabilities_ -race
 cd ..
 
+# Be more strict with discovery tests: run with race detector enabled
+cd discovery
+go test -race
+cd ..
+
+# Be more strict with HTTP push tests: run with race detector enabled
 cd server
-go test -logtostderr=true
-t2=$?
+go test -run Push_ -race
+go test -run RegisterConnection -race
 cd ..
 
-cd monitor
-go test -logtostderr=true
-t3=$?
-cd ..
+./test_args.sh
 
-cd eth
-go test -logtostderr=true
-t4=$?
-cd ..
-
-cd common
-go test -logtostderr=true
-t5=$?
-cd ..
-
-if (($t1!=0||$t2!=0||$t3!=0||$t4!=0||$t5!=0))
-then
-    printf "\n\nSome Tests Failed\n\n"
-    exit -1
-else
-    printf "\n\nAll Tests Passed\n\n"
-    exit 0
-fi
+printf "\n\nAll Tests Passed\n\n"

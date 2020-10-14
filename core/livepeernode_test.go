@@ -4,145 +4,163 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/big"
+	"net/url"
+	"os"
 	"testing"
-	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/livepeer/go-livepeer/eth"
-	lpTypes "github.com/livepeer/go-livepeer/eth/types"
-	"github.com/livepeer/go-livepeer/net"
-	ffmpeg "github.com/livepeer/lpms/ffmpeg"
+	"github.com/golang/glog"
+	"github.com/livepeer/go-livepeer/drivers"
+	"github.com/livepeer/lpms/ffmpeg"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-type StubClaimManager struct {
-	verifyCalled         bool
-	distributeFeesCalled bool
-}
-
-func (cm *StubClaimManager) BroadcasterAddr() common.Address { return common.Address{} }
-func (cm *StubClaimManager) AddReceipt(seqNo int64, fname string, data []byte, bSig []byte, tData map[ffmpeg.VideoProfile][]byte, tStart time.Time, tEnd time.Time) error {
-	return nil
-}
-func (cm *StubClaimManager) SufficientBroadcasterDeposit() (bool, error) { return true, nil }
-func (cm *StubClaimManager) ClaimVerifyAndDistributeFees() error         { return nil }
-func (cm *StubClaimManager) DidFirstClaim() bool                         { return false }
-func (cm *StubClaimManager) CanClaim() (bool, error)                     { return true, nil }
 
 type StubTranscoder struct {
 	Profiles      []ffmpeg.VideoProfile
-	InputData     [][]byte
+	SegCount      int
+	StoppedCount  int
 	FailTranscode bool
+	TranscodeFn   func() error
 }
 
-func (t *StubTranscoder) Transcode(fname string) ([][]byte, error) {
-	d, err := ioutil.ReadFile(fname)
-	if err != nil || t.FailTranscode {
+func newStubTranscoder(d string) TranscoderSession {
+	return &StubTranscoder{}
+}
+
+func stubTranscoderWithProfiles(profiles []ffmpeg.VideoProfile) *StubTranscoder {
+	return &StubTranscoder{Profiles: profiles}
+}
+
+func (t *StubTranscoder) Transcode(md *SegTranscodingMetadata) (*TranscodeData, error) {
+	if t.FailTranscode {
 		return nil, ErrTranscode
 	}
 
-	t.InputData = append(t.InputData, d)
-
-	result := make([][]byte, 0)
-	for _, p := range t.Profiles {
-		result = append(result, []byte(fmt.Sprintf("Transcoded_%v", p.Name)))
+	var err error
+	if t.TranscodeFn != nil {
+		err = t.TranscodeFn()
 	}
-	return result, nil
+
+	t.SegCount++
+
+	segments := make([]*TranscodedSegmentData, 0)
+	for _, p := range t.Profiles {
+		segments = append(segments, &TranscodedSegmentData{Data: []byte(fmt.Sprintf("Transcoded_%v", p.Name))})
+	}
+
+	return &TranscodeData{Segments: segments}, err
+}
+
+func (t *StubTranscoder) Stop() {
+	t.StoppedCount++
 }
 
 func TestTranscodeAndBroadcast(t *testing.T) {
-	nid := NodeID("12201c23641663bf06187a8c154a6c97266d138cb8379c1bc0828122dcc51c83698d")
-	strmID, _ := MakeStreamID(nid, RandomVideoID(), ffmpeg.P720p30fps4x3.Name)
-	jid := big.NewInt(0)
 	ffmpeg.InitFFmpeg()
-	defer ffmpeg.DeinitFFmpeg()
 	p := []ffmpeg.VideoProfile{ffmpeg.P720p60fps16x9, ffmpeg.P144p30fps16x9}
-	config := net.TranscodeConfig{StrmID: strmID.String(), Profiles: p, PerformOnchainClaim: false, JobID: jid}
+	tr := stubTranscoderWithProfiles(p)
+	storage := drivers.NewMemoryDriver(nil).NewSession("")
+	config := transcodeConfig{LocalOS: storage, OS: storage}
 
-	stubnet := &StubVideoNetwork{subscribers: make(map[string]*StubSubscriber)}
-	stubnet.subscribers[strmID.String()] = &StubSubscriber{}
-	n, err := NewLivepeerNode(&eth.StubClient{}, stubnet, nid, ".", nil) // TODO fix empty work dir
+	tmpdir, _ := ioutil.TempDir("", "")
+	n, err := NewLivepeerNode(nil, tmpdir, nil)
 	if err != nil {
 		t.Errorf("Error: %v", err)
 	}
+	defer os.RemoveAll(tmpdir)
+	n.Transcoder = tr
 
-	tr := &StubTranscoder{InputData: make([][]byte, 0), Profiles: p}
-	ids, err := n.TranscodeAndBroadcast(config, &StubClaimManager{}, tr)
-	if err != nil {
-		t.Errorf("Error: %v", err)
+	md := &SegTranscodingMetadata{Profiles: p}
+	ss := StubSegment()
+	res := n.transcodeSeg(config, ss, md)
+	if res.Err != nil {
+		t.Errorf("Error: %v", res.Err)
 	}
 
-	if len(ids) != 2 {
-		t.Errorf("Expecting 2 profiles, got %v", ids)
+	if len(res.TranscodeData.Segments) != len(p) {
+		t.Errorf("Expecting %v profiles, got %v", len(p), len(res.TranscodeData.Segments))
 	}
 
-	start := time.Now()
-	for time.Since(start) < time.Second {
-		if len(tr.InputData) == 0 {
-			time.Sleep(100 * time.Millisecond)
+	//Should have 1 transcoded segment into 2 different profiles
+	if tr.SegCount != 1 {
+		t.Errorf("Expecting 1 segment to be transcoded, got %v", tr.SegCount)
+	}
+
+	// Check playlist was updated
+	// XXX Fix this
+	/*for _, v := range strmIds {
+		pl := n.VideoSource.GetHLSMediaPlaylist(v)
+		if pl == nil {
+			t.Error("Expected media playlist; got none")
 		}
-	}
-	//Should have transcoded the segments into 2 different profiles (right now StubSubscriber emits 1 segment)
-	if len(tr.InputData) != 1 {
-		t.Errorf("Expecting 1 segment to be transcoded, got %v", tr.InputData)
-	}
+		if len(pl.Segments) != 1 && pl.SeqNo != 100 {
+			t.Error("Mismatched segments (expected 1) or seq (expected 100), got ", pl.Segments, pl.SeqNo)
+		}
+	}*/
 
-	// Should have broadcasted the transcoded segments into new streams
-	if len(stubnet.broadcasters) != 2 {
-		t.Errorf("Expecting 2 streams to be created, but got %v", stubnet.broadcasters)
-	}
-	if len(n.VideoNetwork.(*StubVideoNetwork).broadcasters) != 2 {
-		t.Errorf("Expecting 2 broadcasters to be created, but got %v", n.VideoNetwork.(*StubVideoNetwork).broadcasters)
-	}
+	// TODO check sig?
 
 	// Test when transcoder fails
 	tr.FailTranscode = true
-	ids, err = n.TranscodeAndBroadcast(config, &StubClaimManager{}, tr)
+	res = n.transcodeSeg(config, ss, md)
+	if res.Err == nil {
+		t.Error("Expecting a transcode error")
+	}
+	tr.FailTranscode = false
 
-	//TODO: Should have done the claiming
+	// Test when the number of results mismatchches expectations
+	tr.Profiles = []ffmpeg.VideoProfile{p[0]}
+	res = n.transcodeSeg(config, ss, md)
+	if res.Err == nil || res.Err.Error() != "MismatchedSegments" {
+		t.Error("Did not get mismatched segments as expected")
+	}
+	tr.Profiles = p
 }
 
-func TestNodeClaimManager(t *testing.T) {
-	nid := NodeID("12201c23641663bf06187a8c154a6c97266d138cb8379c1bc0828122dcc51c83698d")
-	stubnet := &StubVideoNetwork{subscribers: make(map[string]*StubSubscriber)}
-	n, err := NewLivepeerNode(nil, stubnet, nid, ".", nil)
+func TestServiceURIChange(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 
-	job := &lpTypes.Job{
-		JobId:              big.NewInt(15),
-		MaxPricePerSegment: big.NewInt(1),
-		Profiles:           []ffmpeg.VideoProfile{},
-		TotalClaims:        big.NewInt(0),
-	}
+	n, err := NewLivepeerNode(nil, "", nil)
+	require.Nil(err)
 
-	// test claimmanager existence via manual insertion
-	n.ClaimManagers[15] = &StubClaimManager{}
-	cm, err := n.GetClaimManager(job)
-	if err != nil || cm == nil {
-		t.Errorf("Did not retrieve claimmanager %v %v", cm, err)
-		return
-	}
+	sUrl, err := url.Parse("test://testurl.com")
+	require.Nil(err)
+	n.SetServiceURI(sUrl)
 
-	job.JobId = big.NewInt(10)
+	drivers.NodeStorage = drivers.NewMemoryDriver(n.GetServiceURI())
+	sesh := drivers.NodeStorage.NewSession("testpath")
+	savedUrl, err := sesh.SaveData("testdata1", []byte{0, 0, 0})
+	require.Nil(err)
+	assert.Equal("test://testurl.com/stream/testpath/testdata1", savedUrl)
 
-	// test with a nil eth client
-	cm, err = n.GetClaimManager(job)
-	if err != nil || cm != nil {
-		t.Errorf("Claimmanager unexpected result %v %v", cm, err)
-		return
-	}
+	glog.Infof("Setting service URL to newurl")
+	newUrl, err := url.Parse("test://newurl.com")
+	n.SetServiceURI(newUrl)
+	require.Nil(err)
+	furl, err := sesh.SaveData("testdata2", []byte{0, 0, 0})
+	require.Nil(err)
+	assert.Equal("test://newurl.com/stream/testpath/testdata2", furl)
 
-	// test with a nonexisting job
-	stubClient := eth.StubClient{}
-	n.Eth = &stubClient
-	cm, err = n.GetClaimManager(nil)
-	if err == nil || err.Error() != "Nil job" {
-		t.Error("Expected nil job ", err)
-		return
-	}
+	glog.Infof("Setting service URL to secondurl")
+	secondUrl, err := url.Parse("test://secondurl.com")
+	n.SetServiceURI(secondUrl)
+	require.Nil(err)
+	surl, err := sesh.SaveData("testdata3", []byte{0, 0, 0})
+	require.Nil(err)
+	assert.Equal("test://secondurl.com/stream/testpath/testdata3", surl)
+}
 
-	// test creating a new claimmanager
-	cm, err = n.GetClaimManager(job)
-	if err != nil || cm == nil {
-		t.Error("Expected claimmanager from job ", cm, err)
-		return
-	}
+func TestSetAndGetBasePrice(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	n, err := NewLivepeerNode(nil, "", nil)
+	require.Nil(err)
+
+	price := big.NewRat(1, 1)
+
+	n.SetBasePrice(price)
+	assert.Zero(n.priceInfo.Cmp(price))
+	assert.Zero(n.GetBasePrice().Cmp(price))
 }

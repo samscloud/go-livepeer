@@ -6,6 +6,10 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts/keystore"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/livepeer/go-livepeer/crypto"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAccountManager(t *testing.T) {
@@ -17,7 +21,7 @@ func TestAccountManager(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	am, err := NewAccountManager(a.Address, dir)
+	am, err := NewAccountManager(a.Address, dir, types.EIP155Signer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +52,7 @@ func TestEmptyPassphrase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	am, err := NewAccountManager(a.Address, dir)
+	am, err := NewAccountManager(a.Address, dir, types.EIP155Signer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +69,31 @@ func TestEmptyPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestSign(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	dir, ks := tmpKeyStore(t, true)
+	defer os.RemoveAll(dir)
+
+	a, err := ks.NewAccount("")
+	require.Nil(err)
+
+	am, err := NewAccountManager(a.Address, dir, types.EIP155Signer{})
+	require.Nil(err)
+
+	_, err = am.Sign([]byte("foo"))
+	assert.NotNil(err)
+	assert.EqualError(err, "authentication needed: password or unlock")
+
+	err = am.Unlock("")
+	require.Nil(err)
+
+	sig, err := am.Sign([]byte("foo"))
+	assert.Nil(err)
+	assert.True(crypto.VerifySig(a.Address, []byte("foo"), sig))
 }
 
 func tmpKeyStore(t *testing.T, encrypted bool) (string, *keystore.KeyStore) {

@@ -11,7 +11,6 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/console"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/common"
 )
@@ -22,14 +21,23 @@ var (
 	ErrPassphraseMismatch = fmt.Errorf("passphrases do not match")
 )
 
-type AccountManager struct {
-	Account accounts.Account
+type AccountManager interface {
+	Unlock(passphrase string) error
+	Lock() error
+	CreateTransactOpts(gasLimit uint64, gasPrice *big.Int) (*bind.TransactOpts, error)
+	SignTx(tx *types.Transaction) (*types.Transaction, error)
+	Sign(msg []byte) ([]byte, error)
+	Account() accounts.Account
+}
 
+type accountManager struct {
+	account  accounts.Account
+	signer   types.Signer
 	unlocked bool
 	keyStore *keystore.KeyStore
 }
 
-func NewAccountManager(accountAddr ethcommon.Address, keystoreDir string) (*AccountManager, error) {
+func NewAccountManager(accountAddr ethcommon.Address, keystoreDir string, signer types.Signer) (AccountManager, error) {
 	keyStore := keystore.NewKeyStore(keystoreDir, keystore.StandardScryptN, keystore.StandardScryptP)
 
 	acctExists := keyStore.HasAddress(accountAddr)
@@ -38,7 +46,11 @@ func NewAccountManager(accountAddr ethcommon.Address, keystoreDir string) (*Acco
 	var acct accounts.Account
 	var err error
 	if numAccounts == 0 || ((accountAddr != ethcommon.Address{}) && !acctExists) {
-		glog.Infof("Please create a new ETH account")
+		glog.Infof("No Ethereum account found. Creating a new account")
+		glog.Infof("This process will create a new Ethereum account for this Livepeer node")
+		glog.Infof("Please enter a passphrase to encrypt the Private Keystore file for the Ethereum account.")
+		glog.Infof("This process will ask for this passphrase every time it is launched")
+		glog.Infof("(no characters will appear in Terminal when the passphrase is entered)")
 
 		// Account does not exist yet, set it up
 		acct, err = createAccount(keyStore)
@@ -55,28 +67,33 @@ func NewAccountManager(accountAddr ethcommon.Address, keystoreDir string) (*Acco
 		}
 	}
 
-	glog.Infof("Using ETH account: %v", acct.Address.Hex())
+	glog.Infof("Using Ethereum account: %v", acct.Address.Hex())
 
-	return &AccountManager{
-		Account:  acct,
+	return &accountManager{
+		account:  acct,
+		signer:   signer,
 		unlocked: false,
 		keyStore: keyStore,
 	}, nil
 }
 
 // Unlock account indefinitely using underlying keystore
-func (am *AccountManager) Unlock(passphrase string) error {
+func (am *accountManager) Unlock(pass string) error {
 	var err error
 
-	err = am.keyStore.Unlock(am.Account, passphrase)
+	// We don't care if GetPass() returns an error.
+	// The string it returns will always be valid.
+	passphrase, _ := common.GetPass(pass)
+
+	err = am.keyStore.Unlock(am.account, passphrase)
 	if err != nil {
 		if passphrase != "" {
 			return err
 		}
-		glog.Infof("Passphrase required to unlock ETH account %v", am.Account.Address.Hex())
+		glog.Infof("Please enter the passphrase to unlock Ethereum account %v", am.account.Address.Hex())
 
 		passphrase, err = getPassphrase(false)
-		err = am.keyStore.Unlock(am.Account, passphrase)
+		err = am.keyStore.Unlock(am.account, passphrase)
 		if err != nil {
 			return err
 		}
@@ -84,14 +101,14 @@ func (am *AccountManager) Unlock(passphrase string) error {
 
 	am.unlocked = true
 
-	glog.Infof("Unlocked ETH account: %v", am.Account.Address.Hex())
+	glog.Infof("Unlocked ETH account: %v", am.account.Address.Hex())
 
 	return nil
 }
 
 // Lock account using underlying keystore and remove associated private key from memory
-func (am *AccountManager) Lock() error {
-	err := am.keyStore.Lock(am.Account.Address)
+func (am *accountManager) Lock() error {
+	err := am.keyStore.Lock(am.account.Address)
 	if err != nil {
 		return err
 	}
@@ -103,41 +120,55 @@ func (am *AccountManager) Lock() error {
 
 // Create transact opts for client use - account must be unlocked
 // Can optionally set gas limit and gas price used
-func (am *AccountManager) CreateTransactOpts(gasLimit uint64, gasPrice *big.Int) (*bind.TransactOpts, error) {
+func (am *accountManager) CreateTransactOpts(gasLimit uint64, gasPrice *big.Int) (*bind.TransactOpts, error) {
 	if !am.unlocked {
 		return nil, ErrLocked
 	}
 
 	return &bind.TransactOpts{
-		From:     am.Account.Address,
+		From:     am.account.Address,
 		GasLimit: gasLimit,
 		GasPrice: gasPrice,
 		Signer: func(signer types.Signer, address ethcommon.Address, tx *types.Transaction) (*types.Transaction, error) {
-			if address != am.Account.Address {
+			if address != am.account.Address {
 				return nil, errors.New("not authorized to sign this account")
 			}
 
-			return am.SignTx(signer, tx)
+			return am.SignTx(tx)
 		},
 	}, nil
 }
 
 // Sign a transaction. Account must be unlocked
-func (am *AccountManager) SignTx(signer types.Signer, tx *types.Transaction) (*types.Transaction, error) {
-	signature, err := am.keyStore.SignHash(am.Account, signer.Hash(tx).Bytes())
+func (am *accountManager) SignTx(tx *types.Transaction) (*types.Transaction, error) {
+	signature, err := am.keyStore.SignHash(am.account, am.signer.Hash(tx).Bytes())
 	if err != nil {
 		return nil, err
 	}
 
-	return tx.WithSignature(signer, signature)
+	return tx.WithSignature(am.signer, signature)
 }
 
 // Sign byte array message. Account must be unlocked
-func (am *AccountManager) Sign(msg []byte) ([]byte, error) {
-	personalMsg := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", 32, msg)
-	personalHash := crypto.Keccak256([]byte(personalMsg))
+func (am *accountManager) Sign(msg []byte) ([]byte, error) {
+	ethHash := accounts.TextHash(msg)
+	sig, err := am.keyStore.SignHash(am.account, ethHash)
+	if err != nil {
+		return nil, err
+	}
 
-	return am.keyStore.SignHash(am.Account, personalHash)
+	// sig is in the [R || S || V] format where V is 0 or 1
+	// Convert the V param to 27 or 28
+	v := sig[64]
+	if v == byte(0) || v == byte(1) {
+		v += 27
+	}
+
+	return append(sig[:64], v), nil
+}
+
+func (am *accountManager) Account() accounts.Account {
+	return am.account
 }
 
 // Get account from keystore using hex address

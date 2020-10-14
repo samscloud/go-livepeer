@@ -15,3 +15,18 @@
 .glide/
 
 eth/protocol
+
+# Our compiled binary
+/livepeer
+/livepeer_cli
+
+/.git.describe
+/livepeer-windows-amd64.zip
+
+#cmd/devtool generated directories and files
+/.lpdev2
+/.git.describe
+
+#windows build env
+/msys2
+/msys2-install
